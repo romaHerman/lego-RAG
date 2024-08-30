@@ -128,9 +128,6 @@ if __name__ == "__main__":
 
         sets_with_reviews = download_reviews_for_sets(api_key, load_from_json("sets.json"))
         save_to_json(sets_with_reviews, "sets_reviews.json")
-
-        sets_with_reviews = download_reviews_for_sets(api_key, load_from_json("sets.json"))
-        save_to_json(sets_with_reviews, "sets_reviews.json")
     else:
         print("Failed to retrieve years.")
 
