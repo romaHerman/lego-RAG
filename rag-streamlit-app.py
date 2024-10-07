@@ -1,5 +1,5 @@
 import streamlit as st
-import openai
+from openai import OpenAI
 import requests
 import json
 import psycopg2
@@ -16,10 +16,12 @@ import spacy
 from sentence_transformers import SentenceTransformer
 
 from tqdm.auto import tqdm
+from elasticsearch.helpers import bulk
+
 
 # Initialize OpenAI API (Make sure to set your API key in the environment variables)
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai = OpenAI(api_key=OPENAI_API_KEY)
 #ES index name
 index_name = "lego_sets"
 
@@ -43,6 +45,7 @@ model = SentenceTransformer(model_name)
 prompt_template = """
 You're a lego shop assistant. Answer the QUESTION based on the CONTEXT from Lego sets database.
 Use only the facts from the CONTEXT when answering the QUESTION. Return brief description of the set bsaed on the sample data use bricksetURL to provde it's link
+If there is no answer in CONTEXT reply: please paraphrase your question 
 
 QUESTION: {question}
 
@@ -407,17 +410,20 @@ def build_prompt(query, search_results):
     prompt = prompt_template.format(question=query, context=context).strip()
     return prompt
 
+def llm(prompt):
+    response = openai.chat.completions.create(
+        model='gpt-4o-mini',
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response#.choices[0].message.content
+
 def query_openai(prompt):
     start_time = time.time()
-    response = openai.Completion.create(
-        engine="text-davinci-002",
-        prompt=prompt,
-        max_tokens=150
-    )
+    response = llm(prompt)
     end_time = time.time()
     
-    answer = response.choices[0].text.strip()
-    cost = response.usage.total_tokens * 0.02 / 1000  # Assuming $0.02 per 1K tokens
+    answer = response.choices[0].message.content.strip()
+    cost = response.usage.total_tokens * 0.00250 / 1000
     duration = end_time - start_time
     
     return answer, cost, duration
@@ -491,7 +497,19 @@ def load_from_json(filename):
     except IOError as e:
         print(f"An error occurred while loading data from {filename}: {e}")
         return None
+# Function to read documents from the backup file
+def read_documents(filename):
+    with open(filename, 'r') as f:
+        for line in f:
+            yield json.loads(line.strip())
 
+# Function to prepare documents for bulk indexing
+def doc_generator(documents):
+    for doc in documents:
+        yield {
+            "_index": index_name,
+            "_source": doc
+        }
 # Elasticsearch indexing (only done once)
 if 'indexed' not in st.session_state:
     st.session_state.indexed = False
@@ -501,49 +519,21 @@ if not st.session_state.indexed:
     es_client.options(ignore_status=[400,404]).indices.delete(index=index_name)
     es_client.indices.create(index=index_name, body={"mappings": mapping})
 
-    lego_doc = load_from_json("sets_reviews.json")
+    #lego_doc = load_from_json("sets_reviews.json")
 
     # Flattening the structure
-    flattened_lego_doc = []
+    #flattened_lego_doc = []
 
-    for year, sets in lego_doc.items():
-        flattened_lego_doc.extend(sets)
+    # for year, sets in lego_doc.items():
+    #     flattened_lego_doc.extend(sets)
 
-    model_name = 'all-mpnet-base-v2'#multi-qa-MiniLM-L6-cos-v1'
-    model = SentenceTransformer(model_name)
+    # Read documents from the backup file
+    documents = read_documents('lego_sets_backup.json')
 
-    for doc in tqdm(flattened_lego_doc):
-        if "name" in doc:
-            name = doc["name"].replace("{?}", "")
-            if name:
-                doc['name_vector'] = model.encode(name)
-        try:
-            if "theme" in doc:
-                doc['theme_vector'] = model.encode(doc["theme"])
-        except LookupError as e:
-            print(e)
+    # Bulk index the documents
+    success, failed = bulk(es_client, doc_generator(tqdm(documents, desc="Indexing documents")), stats_only=True)
 
-        if "subtheme" in doc:
-            doc['subtheme_vector'] = model.encode(doc["subtheme"])
-        
-        if "category" in doc:
-            doc['category_vector'] = model.encode(doc["category"])
-
-        if "extendedData" in doc:
-            if "tags" in doc:
-                doc['tags_vector'] = model.encode(''.join(doc["tags"]))
-            if "description" in doc:
-                doc['description_vector'] = model.encode(doc["description"])
-    
-        if "reviews" in doc:
-            reviews_arr = map(lambda x: x["review"], doc["reviews"])
-            doc['review_vector'] = model.encode('#'.join(reviews_arr))
-        
-        if 'year' in doc:
-            doc['year_vector'] = model.encode(str(doc['year']))
-
-    for doc in tqdm(flattened_lego_doc):
-        es_client.index(index=index_name, document=doc)
+    print(f"Indexed {success} documents successfully. {failed} documents failed.")
 
     st.session_state.indexed = True
     st.write("Elasticsearch index created!")
