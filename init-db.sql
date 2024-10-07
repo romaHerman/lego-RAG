@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS rag_feedback (
+    id SERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    cost NUMERIC(10, 4) NOT NULL,
+    duration NUMERIC(10, 2) NOT NULL,
+    helpful BOOLEAN NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS request_costs (
+    id SERIAL PRIMARY KEY,
+    model VARCHAR(50) NOT NULL,
+    tokens_used INTEGER NOT NULL,
+    cost NUMERIC(10, 4) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

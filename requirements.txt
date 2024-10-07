@@ -1,0 +1,8 @@
+streamlit
+psycopg2-binary
+sentence-transformers
+elasticsearch
+openai
+requests
+tqdm
+json5
